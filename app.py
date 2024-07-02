@@ -9,18 +9,23 @@ import uvicorn
 import os
 import uuid
 import shutil
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://alirezadaneshvar.com" , "http://localhost:5173"],  # Allows only specific origins
+    allow_origins=["https://alirezadaneshvar.com", "http://localhost:5173"],  # Allows only specific origins
     allow_credentials=True,
     allow_methods=["*"],  # Allows all methods
     allow_headers=["*"],  # Allows all headers
 )
 
-UPLOAD_FOLDER = "pdf_files"
+UPLOAD_FOLDER = "./pdf_files"
 SESSION_DATA = {}
 
 class ConversationState(BaseModel):
@@ -60,7 +65,8 @@ async def upload_file(response: Response, session_id: str = Depends(get_session_
     # Set the session ID in the response cookie
     response.set_cookie(key="session_id", value=session_id)
 
-    return {"message": "File uploaded and processed successfully", "session_id" : session_id}
+    logger.info(f"File uploaded and processed successfully for session_id: {session_id}")
+    return {"message": "File uploaded and processed successfully", "session_id": session_id}
 
 @app.post("/chat")
 async def result(body: dict, session_id: str = Depends(get_session_id)):
@@ -72,20 +78,27 @@ async def result(body: dict, session_id: str = Depends(get_session_id)):
     completion = get_completion(body)
     return {"AIResponse": completion}
 
-
 @app.post("/end_session")
 async def end_session(response: Response, session_id: str = Depends(get_session_id)):
+    logger.info(f"Ending session for session_id: {session_id}")
+
     # Delete the entire directory associated with the session
     if session_id in SESSION_DATA:
         session_dir = os.path.dirname(SESSION_DATA[session_id][0])
         if os.path.exists(session_dir):
+            logger.info(f"Deleting session directory: {session_dir}")
             shutil.rmtree(session_dir)
+        else:
+            logger.warning(f"Session directory not found: {session_dir}")
         del SESSION_DATA[session_id]
     
     # Remove session-specific database directory
-    db_dir = os.path.join("RAGModel/vectorDB", session_id)
+    db_dir = os.path.join("./RAGModel/vectorDB", session_id)
     if os.path.exists(db_dir):
+        logger.info(f"Deleting database directory: {db_dir}")
         shutil.rmtree(db_dir)
+    else:
+        logger.warning(f"Database directory not found: {db_dir}")
     
     # Remove the session cookie
     response.delete_cookie(key="session_id")

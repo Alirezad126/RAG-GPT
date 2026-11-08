@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: rag-gpt
+    runtime: docker
+    plan: starter
+    healthCheckPath: /health
+    # A session's vector store lives on the instance that created it.
+    numInstances: 1
+    envVars:
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: ALLOWED_ORIGINS
+        value: https://alirezadaneshvar.com
+      - key: DATA_DIR
+        value: /data
+    disk:
+      name: data
+      mountPath: /data
+      sizeGB: 1

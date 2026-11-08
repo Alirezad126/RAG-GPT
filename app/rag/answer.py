@@ -1,13 +1,11 @@
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
-
-from app.config import CHAT_MODEL
+from app.config import DEFAULT_MODEL, GROQ_API_KEY, MAX_TOKENS, MODELS
 from app.rag.retrieval import top_chunks
 
 CONTEXTUALIZE_PROMPT = (
     "Given the chat history and the latest user question, which might reference "
     "earlier turns, rewrite it as a standalone question that can be understood "
-    "on its own. Do NOT answer it. Return it unchanged if it already stands alone."
+    "on its own. Do NOT answer it. Return it unchanged if it already stands "
+    "alone. Reply with the question only."
 )
 
 ANSWER_PROMPT = (
@@ -17,43 +15,56 @@ ANSWER_PROMPT = (
     "Document excerpts:\n{context}"
 )
 
-_llm = None
+_client = None
 
 
-def llm():
-    global _llm
-    if _llm is None:
-        _llm = ChatOpenAI(model=CHAT_MODEL, temperature=0.5)
-    return _llm
+def client():
+    global _client
+    if _client is None:
+        from groq import Groq
+
+        _client = Groq(api_key=GROQ_API_KEY)
+    return _client
+
+
+def complete(messages, model, max_tokens=MAX_TOKENS):
+    response = client().chat.completions.create(
+        model=model, messages=messages, temperature=0.3, max_tokens=max_tokens
+    )
+    return (response.choices[0].message.content or "").strip()
 
 
 def as_messages(history):
     return [
-        HumanMessage(content=turn.message)
-        if turn.type == "user"
-        else AIMessage(content=turn.message)
+        {
+            "role": "user" if turn.type == "user" else "assistant",
+            "content": turn.message,
+        }
         for turn in history
     ]
 
 
-def standalone_question(question, history):
+def standalone_question(question, history, model):
     """Fold the conversation into the question so retrieval can stand alone."""
     if not history:
         return question
     messages = (
-        [SystemMessage(content=CONTEXTUALIZE_PROMPT)]
+        [{"role": "system", "content": CONTEXTUALIZE_PROMPT}]
         + as_messages(history)
-        + [HumanMessage(content=question)]
+        + [{"role": "user", "content": question}]
     )
-    return llm().invoke(messages).content
+    # A rewrite is one sentence; if the model rambles, fall back to the original.
+    rewritten = complete(messages, model, max_tokens=120)
+    return rewritten if rewritten else question
 
 
-def answer(question, history, chunks, vectors):
-    query = standalone_question(question, history)
+def answer(question, history, chunks, vectors, model=None):
+    model = model if model in MODELS else DEFAULT_MODEL
+    query = standalone_question(question, history, model)
     context = "\n\n".join(top_chunks(query, chunks, vectors))
     messages = (
-        [SystemMessage(content=ANSWER_PROMPT.format(context=context))]
+        [{"role": "system", "content": ANSWER_PROMPT.format(context=context)}]
         + as_messages(history)
-        + [HumanMessage(content=question)]
+        + [{"role": "user", "content": question}]
     )
-    return llm().invoke(messages).content
+    return complete(messages, model)

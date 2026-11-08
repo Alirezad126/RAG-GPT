@@ -1,55 +1,80 @@
 # RAG-GPT
 
-A retrieval-augmented generation service: upload a PDF, then ask questions about
-it. Each visitor gets an isolated session, and the session's data is deleted on
-request.
+A retrieval-augmented generation service: upload a PDF, then ask questions
+about it. Each visitor gets an isolated session, and the session's data is
+deleted on request.
 
-Runs as a single AWS Lambda function behind a function URL, with session
-embeddings in S3 — no server and no vector database to keep alive. It backs the
-live demo on the RAG-GPT page of
-[my portfolio](https://github.com/Alirezad126/Alirezad126.github.io).
+It runs on open-weight models and costs nothing to operate. Embeddings are
+computed inside the function by a small ONNX model, so indexing calls no API at
+all; generation goes to [Groq](https://console.groq.com), which serves
+open-weight models on a free tier. The visitor picks which model answers.
+
+Deployed as a single AWS Lambda function behind a function URL, with session
+embeddings in S3 — no server and no vector database to keep alive.
 
 ## How it works
 
-1. **Ingest** — the uploaded PDF is read with `pypdf` and split into
-   overlapping 512-character chunks.
-2. **Embed** — the chunks are embedded in one OpenAI call. The texts and their
-   vectors are written to S3 under the session id.
-3. **Retrieve** — a question is first rewritten into a standalone one using the
-   chat history, then embedded and compared against the stored vectors by cosine
-   similarity; the top `k` chunks become the context.
-4. **Answer** — context and history go to the chat model, which is instructed to
-   answer only from the document and to say when it does not know.
+1. **Ingest** — the PDF is read with `pypdf` and split into overlapping
+   512-character chunks, breaking on paragraphs before lines before sentences.
+2. **Embed** — the chunks are embedded locally with `bge-small-en-v1.5`
+   (384 dimensions, ~64 MB of ONNX weights). The texts and vectors are written
+   to S3 under the session id.
+3. **Retrieve** — a follow-up question is first rewritten into a standalone one
+   using the chat history, then embedded and compared against the stored vectors
+   by cosine similarity. The top `k` chunks become the context.
+4. **Answer** — context and history go to the chosen model, which is instructed
+   to answer only from the document and to say when it does not know.
 
-One PDF is a few hundred chunks, so the index loads in a single request and is
-searched with a NumPy dot product. That is why there is no vector database here:
-Chroma or pgvector would mean a process to keep running, and at this size they
-would not be any faster.
+Two deliberate omissions. There is **no vector database**: one PDF is a few
+hundred chunks, so the index loads in a single request and a NumPy dot product
+searches it in microseconds — Chroma or pgvector would mean a process to keep
+running without being any faster at this size. And there is **no LLM in the
+function**: a model worth showing needs a GPU, so generation is an API call,
+while embedding is small enough to run on Lambda's CPU in milliseconds.
 
 ```
 app/
 ├── main.py            FastAPI app and endpoints
 ├── lambda_handler.py  Mangum adapter — the Lambda entry point
-├── config.py          configuration, read from the environment
+├── config.py          configuration and the model allowlist
 ├── store.py           per-session index, persisted to S3
 └── rag/
-    ├── pdf.py         PDF parsing and chunking
-    ├── retrieval.py   embeddings and similarity search
+    ├── pdf.py         PDF text extraction
+    ├── chunking.py    recursive character splitting
+    ├── retrieval.py   ONNX embeddings and similarity search
     └── answer.py      question rewriting and answering
 ```
 
+## Models
+
+| Model                  | Notes                                |
+| ---------------------- | ------------------------------------ |
+| `openai/gpt-oss-20b`   | Default. Smallest and quickest.      |
+| `openai/gpt-oss-120b`  | Strongest reasoning, a little slower.|
+| `qwen/qwen3-32b`       | Good on dense, technical documents.  |
+
+`GET /models` returns this list for the picker in the UI, and `POST /chat`
+accepts a `model` field. The list in `app/config.py` is an allowlist — an
+unrecognized model falls back to the default rather than being passed through,
+so a request cannot point the function at an arbitrary or paid model.
+
+Groq's free tier is roughly 30 requests per minute and 1,000 per day, shared
+across these models, which is ample for a portfolio demo but worth knowing
+before putting it anywhere busier. Exceeding it returns HTTP 429.
+
 ## API
 
-| Method | Path           | Body                                        | Returns              |
-| ------ | -------------- | ------------------------------------------- | -------------------- |
-| `GET`  | `/health`      | —                                           | `{status}`           |
-| `POST` | `/upload`      | multipart `file` (PDF), optional `session_id` | `{session_id, chunks}` |
-| `POST` | `/chat`        | `{message, conversationState, session_id}`  | `{AIResponse}`       |
-| `POST` | `/end_session` | `{session_id}`                              | `{message}`          |
+| Method | Path           | Body                                            | Returns                |
+| ------ | -------------- | ----------------------------------------------- | ---------------------- |
+| `GET`  | `/health`      | —                                               | `{status}`             |
+| `GET`  | `/models`      | —                                               | `{default, models}`    |
+| `POST` | `/upload`      | multipart `file` (PDF), optional `session_id`   | `{session_id, chunks}` |
+| `POST` | `/chat`        | `{message, conversationState, session_id, model}` | `{AIResponse, model}`  |
+| `POST` | `/end_session` | `{session_id}`                                  | `{message}`            |
 
 The session id is held by the client and passed explicitly — not in a cookie,
-which a browser would treat as third-party and drop, since the API and the
-front end are on different domains. Interactive docs are at `/docs` when running
+which a browser would treat as third-party and drop, since the API and the front
+end are on different domains. Interactive docs are at `/docs` when running
 locally.
 
 Uploads are capped at 4 MB: a Lambda function URL accepts 6 MB per request and
@@ -61,14 +86,15 @@ larger files the upload would have to go straight to S3 with a presigned URL.
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements-dev.txt
-cp .env.example .env        # then fill in OPENAI_API_KEY and S3_BUCKET
+cp .env.example .env        # then fill in GROQ_API_KEY and S3_BUCKET
 set -a && source .env && set +a
 uvicorn app.main:app --reload
 ```
 
-S3 is used even locally, so the AWS credentials in your environment need
-read/write access to the bucket. Run the tests with `pytest` — they mock S3 and
-stub the OpenAI calls, so they need neither.
+The embedding model downloads on first use and is cached. S3 is used even
+locally, so the AWS credentials in your environment need read/write access to
+the bucket. Run the tests with `pytest` — they mock S3 and stub both the
+embedder and Groq, so they need no credentials and no network.
 
 ## Deploying
 
@@ -102,8 +128,8 @@ aws lambda create-function --function-name rag-gpt \
   --package-type Image \
   --code ImageUri=ACCOUNT_ID.dkr.ecr.REGION.amazonaws.com/rag-gpt:latest \
   --role arn:aws:iam::ACCOUNT_ID:role/rag-gpt-lambda \
-  --timeout 60 --memory-size 1024 \
-  --environment 'Variables={OPENAI_API_KEY=sk-...,S3_BUCKET=rag-gpt-sessions-SUFFIX,ALLOWED_ORIGINS=https://alirezad126.github.io}'
+  --timeout 60 --memory-size 1536 \
+  --environment 'Variables={GROQ_API_KEY=gsk_...,S3_BUCKET=rag-gpt-sessions-SUFFIX,ALLOWED_ORIGINS=https://alirezad126.github.io}'
 
 aws lambda create-function-url-config --function-name rag-gpt --auth-type NONE
 aws lambda add-permission --function-name rag-gpt \
@@ -114,16 +140,16 @@ aws lambda add-permission --function-name rag-gpt \
 The URL that comes back is what the front end calls. Every later deploy is just
 `./scripts/deploy.sh`.
 
-Notes on the settings above: the 60-second timeout covers embedding a whole
-document on upload; 1024 MB is about the floor once NumPy and the OpenAI client
-are loaded, and raising memory also raises CPU, which shortens cold starts. CORS
-is handled in the application rather than in the function URL config, so
-`ALLOWED_ORIGINS` is the only place the allowed origins are listed. The bucket
-lifecycle rule is the backstop for sessions whose visitor never calls
-`/end_session`.
+Notes on those settings: the 60-second timeout covers embedding a whole document
+on upload; 1536 MB is comfortable once onnxruntime is loaded, and raising memory
+also raises CPU, which both shortens cold starts and speeds up embedding. The
+model weights are baked into the image so no cold start waits on a download.
+CORS is handled in the application rather than in the function URL config, so
+`ALLOWED_ORIGINS` is the only place origins are listed. The bucket lifecycle rule
+is the backstop for sessions whose visitor never calls `/end_session`.
 
-Cost: within the Lambda free tier at portfolio traffic, plus a few cents of S3
-and whatever OpenAI charges per document and question.
+Cost: within the Lambda free tier at portfolio traffic, a few cents of S3, and
+nothing for inference.
 
 ## License
 

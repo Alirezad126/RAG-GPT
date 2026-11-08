@@ -1,7 +1,7 @@
-from langchain_text_splitters import RecursiveCharacterTextSplitter
 from pypdf import PdfReader
 
 from app.config import CHUNK_OVERLAP, CHUNK_SIZE
+from app.rag.chunking import split_text
 
 
 def chunk_pdf(data):
@@ -14,7 +14,4 @@ def chunk_pdf(data):
             "No extractable text found in the PDF — it may be a scanned image."
         )
 
-    splitter = RecursiveCharacterTextSplitter(
-        chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP
-    )
-    return splitter.split_text(raw_text)
+    return split_text(raw_text, CHUNK_SIZE, CHUNK_OVERLAP)

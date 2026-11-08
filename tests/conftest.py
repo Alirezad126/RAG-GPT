@@ -1,7 +1,7 @@
 import os
 
 os.environ.setdefault("S3_BUCKET", "test-bucket")
-os.environ.setdefault("OPENAI_API_KEY", "test-key")
+os.environ.setdefault("GROQ_API_KEY", "test-key")
 os.environ.setdefault("AWS_ACCESS_KEY_ID", "testing")
 os.environ.setdefault("AWS_SECRET_ACCESS_KEY", "testing")
 os.environ.setdefault("AWS_DEFAULT_REGION", "us-east-1")
@@ -13,29 +13,30 @@ from moto import mock_aws
 
 
 @pytest.fixture
-def client(monkeypatch):
-    """A test client with S3 mocked and the OpenAI calls stubbed out."""
+def calls():
+    """Records the model each generation call was made with."""
+    return []
+
+
+@pytest.fixture
+def client(monkeypatch, calls):
+    """A test client with S3 mocked, and embeddings and Groq stubbed out."""
     import app.main
     import app.rag.answer
     import app.rag.retrieval
     import app.store
 
-    def fake_embed_chunks(chunks):
-        return np.eye(len(chunks), 4, dtype=np.float32)
+    def fake_embed(texts):
+        return np.eye(len(texts), 4, dtype=np.float32)
 
-    monkeypatch.setattr(app.main, "embed_chunks", fake_embed_chunks)
-    monkeypatch.setattr(
-        app.rag.retrieval,
-        "embeddings",
-        lambda: type("E", (), {"embed_query": lambda self, q: [1.0, 0.0, 0.0, 0.0]})(),
-    )
-    monkeypatch.setattr(
-        app.rag.answer,
-        "llm",
-        lambda: type(
-            "L", (), {"invoke": lambda self, m: type("R", (), {"content": "stub"})()}
-        )(),
-    )
+    monkeypatch.setattr(app.main, "embed", fake_embed)
+    monkeypatch.setattr(app.rag.retrieval, "embed", fake_embed)
+
+    def fake_complete(messages, model, max_tokens=None):
+        calls.append(model)
+        return "stub answer"
+
+    monkeypatch.setattr(app.rag.answer, "complete", fake_complete)
 
     with mock_aws():
         app.store._client = None

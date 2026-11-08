@@ -8,10 +8,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from app import store
-from app.config import ALLOWED_ORIGINS, MAX_UPLOAD_BYTES
+from app.config import ALLOWED_ORIGINS, DEFAULT_MODEL, MAX_UPLOAD_BYTES, MODELS
 from app.rag.answer import answer
 from app.rag.pdf import chunk_pdf
-from app.rag.retrieval import embed_chunks
+from app.rag.retrieval import embed
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -37,6 +37,7 @@ class ChatRequest(BaseModel):
     message: str
     conversationState: List[Turn] = []
     session_id: str
+    model: Optional[str] = None
 
 
 class SessionRequest(BaseModel):
@@ -54,6 +55,15 @@ def valid_session_id(session_id):
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.get("/models")
+async def models():
+    """The models the client may choose from, for the picker in the UI."""
+    return {
+        "default": DEFAULT_MODEL,
+        "models": [{"id": model, **info} for model, info in MODELS.items()],
+    }
 
 
 @app.post("/upload")
@@ -78,7 +88,7 @@ async def upload(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
 
-    store.save(session_id, chunks, embed_chunks(chunks))
+    store.save(session_id, chunks, embed(chunks))
     logger.info("Indexed %d chunks for session %s", len(chunks), session_id)
     return {
         "message": "File uploaded and processed successfully",
@@ -95,7 +105,13 @@ async def chat(body: ChatRequest):
         raise HTTPException(status_code=404, detail="Upload a document first.")
 
     chunks, vectors = index
-    return {"AIResponse": answer(body.message, body.conversationState, chunks, vectors)}
+    model = body.model if body.model in MODELS else DEFAULT_MODEL
+    return {
+        "AIResponse": answer(
+            body.message, body.conversationState, chunks, vectors, model
+        ),
+        "model": model,
+    }
 
 
 @app.post("/end_session")

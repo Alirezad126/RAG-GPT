@@ -18,8 +18,11 @@ IMAGE="${REGISTRY}/${ECR_REPO}:latest"
 aws ecr get-login-password --region "$AWS_REGION" \
   | docker login --username AWS --password-stdin "$REGISTRY"
 
-docker build --platform "linux/${ARCH}" -t "$IMAGE" .
-docker push "$IMAGE"
+# --provenance/--sbom off: with them, buildx pushes an OCI image index, and
+# Lambda only accepts a Docker v2 schema 2 manifest.
+docker buildx build --platform "linux/${ARCH}" \
+  --provenance=false --sbom=false \
+  -t "$IMAGE" --push .
 
 aws lambda update-function-code \
   --function-name "$FUNCTION_NAME" \

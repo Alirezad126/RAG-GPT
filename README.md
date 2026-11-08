@@ -130,20 +130,30 @@ aws lambda create-function --function-name rag-gpt \
   --role arn:aws:iam::ACCOUNT_ID:role/rag-gpt-lambda \
   --architectures arm64 \
   --timeout 60 --memory-size 1536 \
-  --environment 'Variables={GROQ_API_KEY=gsk_...,S3_BUCKET=rag-gpt-sessions-SUFFIX,ALLOWED_ORIGINS=https://alirezad126.github.io}'
+  --environment '{"Variables":{"GROQ_API_KEY":"gsk_...","S3_BUCKET":"rag-gpt-sessions-SUFFIX","ALLOWED_ORIGINS":"https://example.github.io,http://localhost:5173"}}'
 
 aws lambda create-function-url-config --function-name rag-gpt --auth-type NONE
+
+# A public function URL needs both of these; one alone returns 403.
 aws lambda add-permission --function-name rag-gpt \
   --statement-id public-url --action lambda:InvokeFunctionUrl \
   --principal '*' --function-url-auth-type NONE
+aws lambda add-permission --function-name rag-gpt \
+  --statement-id public-invoke --action lambda:InvokeFunction --principal '*'
 ```
+
+`--environment` is given as JSON rather than the `Variables={...}` shorthand,
+which cannot express a value containing a comma — as `ALLOWED_ORIGINS` does.
 
 The URL that comes back is what the front end calls. Every later deploy is just
 `./scripts/deploy.sh`.
 
 The image is built for arm64, which is native on an Apple Silicon Mac and
 cheaper to run; `ARCH=x86_64 ./scripts/deploy.sh` and a matching
-`--architectures` build the other way.
+`--architectures` build the other way. The build runs through buildx with
+attestations disabled, because Lambda rejects the OCI image index that buildx
+otherwise pushes, and on a Python 3.12 base, because the 3.11 image is Amazon
+Linux 2 and its glibc is too old for current onnxruntime wheels.
 
 Notes on those settings: the 60-second timeout covers embedding a whole document
 on upload; 1536 MB is comfortable once onnxruntime is loaded, and raising memory

@@ -1,7 +1,9 @@
 .git
+.github
 .gitignore
 .env
-data/
 __pycache__/
 *.pyc
+tests/
 README.md
+requirements-dev.txt

@@ -1,17 +1,10 @@
-FROM python:3.11-slim
+# Lambda container image: the deployment package is far past the 250 MB zip
+# limit once openai and numpy are in it.
+FROM public.ecr.aws/lambda/python:3.11
 
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    DATA_DIR=/data
-
-WORKDIR /srv
-
-RUN pip install --no-cache-dir --upgrade pip
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY app ./app
-RUN mkdir -p /data
+COPY app ${LAMBDA_TASK_ROOT}/app
 
-EXPOSE 8000
-CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+CMD ["app.lambda_handler.handler"]

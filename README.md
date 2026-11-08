@@ -128,6 +128,7 @@ aws lambda create-function --function-name rag-gpt \
   --package-type Image \
   --code ImageUri=ACCOUNT_ID.dkr.ecr.REGION.amazonaws.com/rag-gpt:latest \
   --role arn:aws:iam::ACCOUNT_ID:role/rag-gpt-lambda \
+  --architectures arm64 \
   --timeout 60 --memory-size 1536 \
   --environment 'Variables={GROQ_API_KEY=gsk_...,S3_BUCKET=rag-gpt-sessions-SUFFIX,ALLOWED_ORIGINS=https://alirezad126.github.io}'
 
@@ -139,6 +140,10 @@ aws lambda add-permission --function-name rag-gpt \
 
 The URL that comes back is what the front end calls. Every later deploy is just
 `./scripts/deploy.sh`.
+
+The image is built for arm64, which is native on an Apple Silicon Mac and
+cheaper to run; `ARCH=x86_64 ./scripts/deploy.sh` and a matching
+`--architectures` build the other way.
 
 Notes on those settings: the 60-second timeout covers embedding a whole document
 on upload; 1536 MB is comfortable once onnxruntime is loaded, and raising memory

@@ -38,6 +38,11 @@ def client(monkeypatch, calls):
 
     monkeypatch.setattr(app.rag.answer, "complete", fake_complete)
 
+    # Pin the served catalogue so no test reaches the provider.
+    from app.config import MODELS
+
+    monkeypatch.setattr(app.rag.answer, "_available", list(MODELS))
+
     with mock_aws():
         app.store._client = None
         app.store.client().create_bucket(Bucket="test-bucket")

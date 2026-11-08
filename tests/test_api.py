@@ -122,3 +122,33 @@ def test_unknown_model_falls_back_to_the_default(client, monkeypatch, calls):
     )
     assert response.json()["model"] == DEFAULT_MODEL
     assert calls == [DEFAULT_MODEL]
+
+
+def test_provider_error_is_passed_through(client, monkeypatch):
+    import httpx
+    from groq import APIStatusError
+
+    import app.main
+    import app.rag.answer
+
+    monkeypatch.setattr(app.main, "chunk_pdf", lambda data: ["first", "second"])
+    session_id = client.post(
+        "/upload", files={"file": ("doc.pdf", make_pdf(), "application/pdf")}
+    ).json()["session_id"]
+
+    def rate_limited(messages, model, max_tokens=None):
+        request = httpx.Request("POST", "https://api.groq.com/openai/v1/chat/completions")
+        raise APIStatusError(
+            "rate limited",
+            response=httpx.Response(429, request=request),
+            body=None,
+        )
+
+    monkeypatch.setattr(app.rag.answer, "complete", rate_limited)
+
+    response = client.post(
+        "/chat",
+        json={"message": "hi", "conversationState": [], "session_id": session_id},
+    )
+    assert response.status_code == 429
+    assert "rate limited" in response.json()["detail"].lower()

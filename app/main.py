@@ -5,11 +5,12 @@ from typing import List, Optional, Union
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from groq import APIStatusError
 from pydantic import BaseModel
 
 from app import store
-from app.config import ALLOWED_ORIGINS, DEFAULT_MODEL, MAX_UPLOAD_BYTES, MODELS
-from app.rag.answer import answer
+from app.config import ALLOWED_ORIGINS, MAX_UPLOAD_BYTES, MODELS
+from app.rag.answer import answer, available_models, default_model, resolve
 from app.rag.pdf import chunk_pdf
 from app.rag.retrieval import embed
 
@@ -61,8 +62,10 @@ async def health():
 async def models():
     """The models the client may choose from, for the picker in the UI."""
     return {
-        "default": DEFAULT_MODEL,
-        "models": [{"id": model, **info} for model, info in MODELS.items()],
+        "default": default_model(),
+        "models": [
+            {"id": model, **MODELS[model]} for model in available_models()
+        ],
     }
 
 
@@ -105,13 +108,20 @@ async def chat(body: ChatRequest):
         raise HTTPException(status_code=404, detail="Upload a document first.")
 
     chunks, vectors = index
-    model = body.model if body.model in MODELS else DEFAULT_MODEL
-    return {
-        "AIResponse": answer(
+    model = resolve(body.model)
+    try:
+        response = answer(
             body.message, body.conversationState, chunks, vectors, model
-        ),
-        "model": model,
-    }
+        )
+    except APIStatusError as exc:
+        # Pass the provider's own status through rather than turning a rate
+        # limit or a retired model into an opaque 500.
+        detail = f"The model provider returned {exc.status_code}."
+        if exc.status_code == 429:
+            detail = "Rate limited by the free tier — try again in a minute."
+        logger.warning("Provider error for %s: %s", model, exc)
+        raise HTTPException(status_code=502 if exc.status_code != 429 else 429, detail=detail)
+    return {"AIResponse": response, "model": model}
 
 
 @app.post("/end_session")

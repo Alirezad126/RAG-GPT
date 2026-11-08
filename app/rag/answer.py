@@ -1,5 +1,9 @@
+import logging
+
 from app.config import DEFAULT_MODEL, GROQ_API_KEY, MAX_TOKENS, MODELS
 from app.rag.retrieval import top_chunks
+
+logger = logging.getLogger(__name__)
 
 CONTEXTUALIZE_PROMPT = (
     "Given the chat history and the latest user question, which might reference "
@@ -16,6 +20,7 @@ ANSWER_PROMPT = (
 )
 
 _client = None
+_available = None
 
 
 def client():
@@ -25,6 +30,35 @@ def client():
 
         _client = Groq(api_key=GROQ_API_KEY)
     return _client
+
+
+def available_models():
+    """The allowlisted models the provider is actually serving right now.
+
+    Groq retires models from its free catalogue without much notice, so the
+    list is intersected with what the API reports rather than trusted blindly.
+    If that call fails, fall back to the full allowlist and let the request
+    surface the error.
+    """
+    global _available
+    if _available is None:
+        try:
+            served = {model.id for model in client().models.list().data}
+            logger.info("Provider is serving: %s", sorted(served))
+            _available = [model for model in MODELS if model in served] or list(MODELS)
+        except Exception:  # noqa: BLE001 - provider down; don't cache a failure
+            return list(MODELS)
+    return _available
+
+
+def default_model():
+    models = available_models()
+    return DEFAULT_MODEL if DEFAULT_MODEL in models else models[0]
+
+
+def resolve(model):
+    """The model to answer with: the requested one if served, else the default."""
+    return model if model in available_models() else default_model()
 
 
 def complete(messages, model, max_tokens=MAX_TOKENS):
@@ -59,7 +93,7 @@ def standalone_question(question, history, model):
 
 
 def answer(question, history, chunks, vectors, model=None):
-    model = model if model in MODELS else DEFAULT_MODEL
+    model = resolve(model)
     query = standalone_question(question, history, model)
     context = "\n\n".join(top_chunks(query, chunks, vectors))
     messages = (

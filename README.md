@@ -47,20 +47,27 @@ app/
 
 ## Models
 
-| Model                  | Notes                                |
-| ---------------------- | ------------------------------------ |
-| `openai/gpt-oss-20b`   | Default. Smallest and quickest.      |
-| `openai/gpt-oss-120b`  | Strongest reasoning, a little slower.|
-| `qwen/qwen3-32b`       | Good on dense, technical documents.  |
+| Model                 | Notes                                 |
+| --------------------- | ------------------------------------- |
+| `openai/gpt-oss-20b`  | Default. Smallest and quickest.       |
+| `openai/gpt-oss-120b` | Strongest reasoning, a little slower. |
+| `qwen/qwen3.8-27b`    | Good on dense, technical documents.   |
 
 `GET /models` returns this list for the picker in the UI, and `POST /chat`
 accepts a `model` field. The list in `app/config.py` is an allowlist — an
 unrecognized model falls back to the default rather than being passed through,
 so a request cannot point the function at an arbitrary or paid model.
 
+It is also intersected at runtime with the models the provider reports it is
+serving. Groq retires models from the free catalogue without notice, so an
+entry that disappears stops being offered instead of failing when a visitor
+picks it, and `config.py` can carry candidates that are not currently served.
+
 Groq's free tier is roughly 30 requests per minute and 1,000 per day, shared
 across these models, which is ample for a portfolio demo but worth knowing
-before putting it anywhere busier. Exceeding it returns HTTP 429.
+before putting it anywhere busier. A provider error is passed through with its
+own status — 429 for a rate limit, 502 otherwise — rather than becoming an
+opaque 500.
 
 ## API
 

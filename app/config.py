@@ -5,18 +5,29 @@ import os
 # picks from it, so a request cannot point the function at an arbitrary model.
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 
+# Candidates, not a promise: the catalogue is intersected at runtime with what
+# the provider reports it is serving, so an entry that has been retired simply
+# stops being offered instead of failing when someone picks it.
 MODELS = {
     "openai/gpt-oss-20b": {
         "label": "GPT-OSS 20B",
-        "detail": "Smallest and quickest of the three.",
+        "detail": "Smallest and quickest.",
     },
     "openai/gpt-oss-120b": {
         "label": "GPT-OSS 120B",
         "detail": "Strongest reasoning, a little slower.",
     },
-    "qwen/qwen3-32b": {
-        "label": "Qwen3 32B",
+    "qwen/qwen3.8-27b": {
+        "label": "Qwen3.8 27B",
         "detail": "Good on dense, technical documents.",
+    },
+    "llama-3.3-70b-versatile": {
+        "label": "Llama 3.3 70B",
+        "detail": "Strong general comprehension.",
+    },
+    "llama-3.1-8b-instant": {
+        "label": "Llama 3.1 8B",
+        "detail": "Fastest to first token.",
     },
 }
 DEFAULT_MODEL = os.environ.get("DEFAULT_MODEL", "openai/gpt-oss-20b")
